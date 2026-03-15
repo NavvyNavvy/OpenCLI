@@ -43,17 +43,7 @@ A CLI tool that turns **any website** into a command-line interface. **47 comman
 
 OpenCLI needs a way to communicate with your browser. We highly recommend configuring **both** of the following methods for maximum reliability.
 
-### Connection Method A: Chrome 144+ Auto-Discovery (Recommended)
-
-No extensions needed. Just enable Chrome's built-in remote debugging:
-
-1. Open `chrome://inspect#remote-debugging` in Chrome
-2. Check **"Allow remote debugging for this browser instance"**
-3. Set `OPENCLI_USE_CDP=1` before running opencli
-
-*You can also manually specify an endpoint via `OPENCLI_CDP_ENDPOINT` env var.*
-
-### Connection Method B: Playwright MCP Bridge Extension
+### Connection Method A: Playwright MCP Bridge Extension (Primary)
 
 1. Install **[Playwright MCP Bridge](https://chromewebstore.google.com/detail/playwright-mcp-bridge/mmlmfjhmonkocbjadbfplnigmagldckm)** extension in Chrome.
 2. Obtain your token from the extension settings page.
@@ -81,6 +71,16 @@ And, so that `opencli` commands can use it directly in the terminal, export it i
 ```bash
 export PLAYWRIGHT_MCP_EXTENSION_TOKEN="<your-token-here>"
 ```
+
+### Connection Method B: Chrome 144+ Auto-Discovery (Fallback)
+
+No extensions needed. Just enable Chrome's built-in remote debugging:
+
+1. Open `chrome://inspect#remote-debugging` in Chrome
+2. Check **"Allow remote debugging for this browser instance"**
+3. Set `OPENCLI_USE_CDP=1` before running opencli
+
+*You can also manually specify an endpoint via `OPENCLI_CDP_ENDPOINT` env var.*
 
 ## Quick Start
 

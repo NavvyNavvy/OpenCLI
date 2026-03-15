@@ -43,17 +43,7 @@ OpenCLI 通过 Chrome 浏览器 + [Playwright MCP Bridge](https://github.com/nic
 
 为了让 OpenCLI 能够联通你的浏览器，你需要配置连接方式。**强烈建议以下两种方式都配置上**，互为后备：
 
-### 连接方式 A：Chrome 144+ CDP 自动发现（推荐）
-
-无需安装任何扩展。只需开启 Chrome 内置的远程调试：
-
-1. 在 Chrome 中打开 `chrome://inspect#remote-debugging`
-2. 勾选 **"允许对此浏览器实例进行远程调试" (Allow remote debugging for this browser instance)**
-3. 运行时设置环境变量 `OPENCLI_USE_CDP=1`
-
-*也可通过 `OPENCLI_CDP_ENDPOINT` 环境变量手动指定 CDP endpoint 地址。*
-
-### 连接方式 B：Playwright MCP Bridge 扩展
+### 连接方式 A：Playwright MCP Bridge 扩展（首选）
 
 1. 安装 **[Playwright MCP Bridge](https://chromewebstore.google.com/detail/playwright-mcp-bridge/mmlmfjhmonkocbjadbfplnigmagldckm)** 扩展
 2. 在插件设置页获取你的 Extension Token。
@@ -81,6 +71,16 @@ OpenCLI 通过 Chrome 浏览器 + [Playwright MCP Bridge](https://github.com/nic
 ```bash
 export PLAYWRIGHT_MCP_EXTENSION_TOKEN="<你的-token>"
 ```
+
+### 连接方式 B：Chrome 144+ CDP 自动发现（备选）
+
+无需安装任何扩展。只需开启 Chrome 内置的远程调试：
+
+1. 在 Chrome 中打开 `chrome://inspect#remote-debugging`
+2. 勾选 **"允许对此浏览器实例进行远程调试" (Allow remote debugging for this browser instance)**
+3. 运行时设置环境变量 `OPENCLI_USE_CDP=1`
+
+*也可通过 `OPENCLI_CDP_ENDPOINT` 环境变量手动指定 CDP endpoint 地址。*
 
 ## 快速开始
 
