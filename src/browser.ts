@@ -610,12 +610,23 @@ function extractTabEntries(raw: any): Array<{ index: number; identity: string }>
       .map(line => line.trim())
       .filter(Boolean)
       .map(line => {
-        const match = line.match(/Tab\s+(\d+)\s*(.*)$/);
-        if (!match) return null;
-        return {
-          index: parseInt(match[1], 10),
-          identity: match[2].trim() || `tab-${match[1]}`,
-        };
+        // Match actual Playwright MCP format: "- 0: (current) [title](url)"  or  "- 1: [title](url)"
+        const mcpMatch = line.match(/^-\s+(\d+):\s*(.*)$/);
+        if (mcpMatch) {
+          return {
+            index: parseInt(mcpMatch[1], 10),
+            identity: mcpMatch[2].trim() || `tab-${mcpMatch[1]}`,
+          };
+        }
+        // Legacy format: "Tab 0 ..."
+        const legacyMatch = line.match(/Tab\s+(\d+)\s*(.*)$/);
+        if (legacyMatch) {
+          return {
+            index: parseInt(legacyMatch[1], 10),
+            identity: legacyMatch[2].trim() || `tab-${legacyMatch[1]}`,
+          };
+        }
+        return null;
       })
       .filter((entry): entry is { index: number; identity: string } => entry !== null);
   }

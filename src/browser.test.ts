@@ -20,6 +20,17 @@ describe('browser helpers', () => {
     ]);
   });
 
+  it('extracts tab entries from MCP markdown format', () => {
+    const entries = __test__.extractTabEntries(
+      '- 0: (current) [Playwright MCP extension](chrome-extension://abc/connect.html)\n- 1: [知乎 - 首页](https://www.zhihu.com/)'
+    );
+
+    expect(entries).toEqual([
+      { index: 0, identity: '(current) [Playwright MCP extension](chrome-extension://abc/connect.html)' },
+      { index: 1, identity: '[知乎 - 首页](https://www.zhihu.com/)' },
+    ]);
+  });
+
   it('closes only tabs that were opened during the session', () => {
     const tabsToClose = __test__.diffTabIndexes(
       ['https://example.com', 'Chrome Extension'],
