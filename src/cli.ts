@@ -147,8 +147,20 @@ export function runCli(BUILTIN_CLIS: string, USER_CLIS: string): void {
     .option('--install <cmd>', 'Auto-install command')
     .option('--desc <text>', 'Description')
     .action((name, opts) => {
-      registerExternalCli(name, opts.binary, opts.install, opts.desc);
+      registerExternalCli(name, { binary: opts.binary, install: opts.install, description: opts.desc });
     });
+
+  // Helper: extract args from process.argv and passthrough to external CLI
+  function passthroughExternal(name: string) {
+    const idx = process.argv.indexOf(name);
+    const args = process.argv.slice(idx + 1);
+    try {
+      executeExternalCli(name, args, externalClis);
+    } catch (err: any) {
+      console.error(chalk.red(`Error: ${err.message}`));
+      process.exitCode = 1;
+    }
+  }
 
   for (const ext of externalClis) {
     if (program.commands.some(c => c.name() === ext.name)) continue;
@@ -156,16 +168,7 @@ export function runCli(BUILTIN_CLIS: string, USER_CLIS: string): void {
       .description(`(External) ${ext.description || ext.name}`)
       .allowUnknownOption()
       .allowExcessArguments()
-      .action(() => {
-        // Retrieve args passed to the external CLI
-        // Commander consumes standard args before the action, so we must slice process.argv directly.
-        const extIndex = process.argv.indexOf(ext.name);
-        const args = process.argv.slice(extIndex + 1);
-        executeExternalCli(ext.name, args).catch(err => {
-          console.error(chalk.red(`Error: ${err.message}`));
-          process.exitCode = 1;
-        });
-      });
+      .action(() => passthroughExternal(ext.name));
   }
 
   // ── Antigravity serve (built-in, long-running) ──────────────────────────────
@@ -264,18 +267,24 @@ export function runCli(BUILTIN_CLIS: string, USER_CLIS: string): void {
     });
   }
 
+  // Dangerous system commands that should never be auto-registered
+  const DENY_LIST = new Set([
+    'rm', 'sudo', 'dd', 'mkfs', 'fdisk', 'shutdown', 'reboot',
+    'kill', 'killall', 'chmod', 'chown', 'passwd', 'su', 'mount',
+    'umount', 'format', 'diskutil',
+  ]);
+
   program.on('command:*', (operands: string[]) => {
     const binary = operands[0];
+    if (DENY_LIST.has(binary)) {
+      console.error(chalk.red(`Refusing to register system command '${binary}'.`));
+      process.exitCode = 1;
+      return;
+    }
     if (isBinaryInstalled(binary)) {
       console.log(chalk.cyan(`🔹 Auto-discovered local CLI '${binary}'. Registering...`));
       registerExternalCli(binary);
-      // Execute it
-      const extIndex = process.argv.indexOf(binary);
-      const args = process.argv.slice(extIndex + 1);
-      executeExternalCli(binary, args).catch(err => {
-        console.error(chalk.red(`Error: ${err.message}`));
-        process.exitCode = 1;
-      });
+      passthroughExternal(binary);
     } else {
       console.error(chalk.red(`error: unknown command '${binary}'`));
       program.outputHelp();
