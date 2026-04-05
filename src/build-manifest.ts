@@ -48,6 +48,8 @@ export interface ManifestEntry {
   type: 'yaml' | 'ts';
   /** Relative path from clis/ dir, e.g. 'bilibili/hot.yaml' or 'bilibili/search.js' */
   modulePath?: string;
+  /** Relative path to the original source file from clis/ dir (for YAML: 'site/cmd.yaml') */
+  sourceFile?: string;
   /** Pre-navigation control — see CliCommand.navigateBefore */
   navigateBefore?: boolean | string;
 }
@@ -84,7 +86,7 @@ function isCliCommandValue(value: unknown, site: string): value is CliCommand {
     && Array.isArray(value.args);
 }
 
-function toManifestEntry(cmd: CliCommand, modulePath: string): ManifestEntry {
+function toManifestEntry(cmd: CliCommand, modulePath: string, sourceFile?: string): ManifestEntry {
   return {
     site: cmd.site,
     name: cmd.name,
@@ -100,6 +102,7 @@ function toManifestEntry(cmd: CliCommand, modulePath: string): ManifestEntry {
     replacedBy: cmd.replacedBy,
     type: 'ts',
     modulePath,
+    sourceFile,
     navigateBefore: cmd.navigateBefore,
   };
 }
@@ -134,6 +137,7 @@ function scanYaml(filePath: string, site: string): ManifestEntry | null {
       deprecated: (cliDef as Record<string, unknown>).deprecated as boolean | string | undefined,
       replacedBy: (cliDef as Record<string, unknown>).replacedBy as string | undefined,
       type: 'yaml',
+      sourceFile: path.relative(CLIS_DIR, filePath),
       navigateBefore: cliDef.navigateBefore,
     };
   } catch (err) {
@@ -180,7 +184,7 @@ export async function loadTsManifestEntries(
         return true;
       })
       .sort((a, b) => a.name.localeCompare(b.name))
-      .map(cmd => toManifestEntry(cmd, modulePath));
+      .map(cmd => toManifestEntry(cmd, modulePath, path.relative(CLIS_DIR, filePath)));
   } catch (err) {
     // If parsing fails, log a warning (matching scanYaml behaviour) and skip the entry.
     process.stderr.write(`Warning: failed to scan ${filePath}: ${getErrorMessage(err)}\n`);
