@@ -19,6 +19,7 @@ var WS_RECONNECT_MAX_DELAY = 5e3;
 * tabs (resolveTabId in background.ts filters them).
 */
 var attached = /* @__PURE__ */ new Set();
+var tabFrameContexts = /* @__PURE__ */ new Map();
 var networkCaptures = /* @__PURE__ */ new Map();
 /** Check if a URL can be attached via CDP — only allow http(s) and blank pages. */
 function isDebuggableUrl$1(url) {
@@ -170,6 +171,54 @@ async function insertText(tabId, text) {
 	await ensureAttached(tabId);
 	await chrome.debugger.sendCommand({ tabId }, "Input.insertText", { text });
 }
+function registerFrameTracking() {
+	chrome.debugger.onEvent.addListener((source, method, params) => {
+		const tabId = source.tabId;
+		if (!tabId) return;
+		if (method === "Runtime.executionContextCreated") {
+			const context = params.context;
+			if (!context?.auxData?.frameId || context.auxData.isDefault !== true) return;
+			const frameId = context.auxData.frameId;
+			if (!tabFrameContexts.has(tabId)) tabFrameContexts.set(tabId, /* @__PURE__ */ new Map());
+			tabFrameContexts.get(tabId).set(frameId, context.id);
+		}
+		if (method === "Runtime.executionContextDestroyed") {
+			const ctxId = params.executionContextId;
+			const contexts = tabFrameContexts.get(tabId);
+			if (contexts) {
+				for (const [fid, cid] of contexts) if (cid === ctxId) {
+					contexts.delete(fid);
+					break;
+				}
+			}
+		}
+		if (method === "Runtime.executionContextsCleared") tabFrameContexts.delete(tabId);
+	});
+	chrome.tabs.onRemoved.addListener((tabId) => {
+		tabFrameContexts.delete(tabId);
+	});
+}
+async function getFrameTree(tabId) {
+	await ensureAttached(tabId);
+	return chrome.debugger.sendCommand({ tabId }, "Page.getFrameTree");
+}
+async function evaluateInFrame(tabId, expression, frameId, aggressiveRetry = false) {
+	await ensureAttached(tabId, aggressiveRetry);
+	await chrome.debugger.sendCommand({ tabId }, "Runtime.enable").catch(() => {});
+	const contextId = tabFrameContexts.get(tabId)?.get(frameId);
+	if (contextId === void 0) throw new Error(`No execution context found for frame ${frameId}. The frame may not be loaded yet.`);
+	const result = await chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
+		expression,
+		contextId,
+		returnByValue: true,
+		awaitPromise: true
+	});
+	if (result.exceptionDetails) {
+		const errMsg = result.exceptionDetails.exception?.description || result.exceptionDetails.text || "Eval error";
+		throw new Error(errMsg);
+	}
+	return result.result?.value;
+}
 function normalizeCapturePatterns(pattern) {
 	return String(pattern || "").split("|").map((part) => part.trim()).filter(Boolean);
 }
@@ -226,6 +275,7 @@ async function detach(tabId) {
 	if (!attached.has(tabId)) return;
 	attached.delete(tabId);
 	networkCaptures.delete(tabId);
+	tabFrameContexts.delete(tabId);
 	try {
 		await chrome.debugger.detach({ tabId });
 	} catch {}
@@ -234,11 +284,13 @@ function registerListeners() {
 	chrome.tabs.onRemoved.addListener((tabId) => {
 		attached.delete(tabId);
 		networkCaptures.delete(tabId);
+		tabFrameContexts.delete(tabId);
 	});
 	chrome.debugger.onDetach.addListener((source) => {
 		if (source.tabId) {
 			attached.delete(source.tabId);
 			networkCaptures.delete(source.tabId);
+			tabFrameContexts.delete(source.tabId);
 		}
 	});
 	chrome.tabs.onUpdated.addListener(async (tabId, info) => {
@@ -554,6 +606,7 @@ function initialize() {
 	initialized = true;
 	chrome.alarms.create("keepalive", { periodInMinutes: .4 });
 	registerListeners();
+	registerFrameTracking();
 	connect();
 	console.log("[opencli] OpenCLI extension initialized");
 }
@@ -593,6 +646,7 @@ async function handleCommand(cmd) {
 			case "bind-current": return await handleBindCurrent(cmd, workspace);
 			case "network-capture-start": return await handleNetworkCaptureStart(cmd, workspace);
 			case "network-capture-read": return await handleNetworkCaptureRead(cmd, workspace);
+			case "frames": return await handleFrames(cmd, workspace);
 			default: return {
 				id: cmd.id,
 				ok: false,
@@ -651,6 +705,38 @@ function matchesBindCriteria(tab, cmd) {
 		return false;
 	}
 	return true;
+}
+function getUrlOrigin(url) {
+	if (!url) return null;
+	try {
+		return new URL(url).origin;
+	} catch {
+		return null;
+	}
+}
+function enumerateCrossOriginFrames(tree) {
+	const frames = [];
+	function collect(node, accessibleOrigin) {
+		for (const child of node.childFrames || []) {
+			const frame = child.frame;
+			const frameUrl = frame.url || frame.unreachableUrl || "";
+			const frameOrigin = getUrlOrigin(frameUrl);
+			if (accessibleOrigin && frameOrigin && frameOrigin === accessibleOrigin) {
+				collect(child, frameOrigin);
+				continue;
+			}
+			frames.push({
+				index: frames.length,
+				frameId: frame.id,
+				url: frameUrl,
+				name: frame.name || ""
+			});
+		}
+	}
+	const rootFrame = tree?.frameTree?.frame;
+	const rootUrl = rootFrame?.url || rootFrame?.unreachableUrl || "";
+	collect(tree.frameTree, getUrlOrigin(rootUrl));
+	return frames;
 }
 function setWorkspaceSession(workspace, session) {
 	const existing = automationSessions.get(workspace);
@@ -782,8 +868,35 @@ async function handleExec(cmd, workspace) {
 	const tabId = await resolveTabId(await resolveCommandTabId(cmd), workspace);
 	try {
 		const aggressive = workspace.startsWith("browser:") || workspace.startsWith("operate:");
+		if (cmd.frameIndex != null) {
+			const frames = enumerateCrossOriginFrames(await getFrameTree(tabId));
+			if (cmd.frameIndex < 0 || cmd.frameIndex >= frames.length) return {
+				id: cmd.id,
+				ok: false,
+				error: `Frame index ${cmd.frameIndex} out of range (${frames.length} cross-origin frames available)`
+			};
+			const data = await evaluateInFrame(tabId, cmd.code, frames[cmd.frameIndex].frameId, aggressive);
+			return pageScopedResult(cmd.id, tabId, data);
+		}
 		const data = await evaluateAsync(tabId, cmd.code, aggressive);
 		return pageScopedResult(cmd.id, tabId, data);
+	} catch (err) {
+		return {
+			id: cmd.id,
+			ok: false,
+			error: err instanceof Error ? err.message : String(err)
+		};
+	}
+}
+async function handleFrames(cmd, workspace) {
+	const tabId = await resolveTabId(await resolveCommandTabId(cmd), workspace);
+	try {
+		const tree = await getFrameTree(tabId);
+		return {
+			id: cmd.id,
+			ok: true,
+			data: enumerateCrossOriginFrames(tree)
+		};
 	} catch (err) {
 		return {
 			id: cmd.id,
@@ -1035,6 +1148,7 @@ var CDP_ALLOWLIST = new Set([
 	"Input.insertText",
 	"Page.getLayoutMetrics",
 	"Page.captureScreenshot",
+	"Page.getFrameTree",
 	"Runtime.enable",
 	"Emulation.setDeviceMetricsOverride",
 	"Emulation.clearDeviceMetricsOverride"
